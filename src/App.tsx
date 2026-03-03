@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import './App.css'
 import { CodeEditor } from './components/CodeEditor'
 import { ControlBar } from './components/ControlBar'
 import {
-  BookIcon,
-  FlowIcon,
+  ClockIcon,
   LayersIcon,
   MenuIcon,
   PauseIcon,
@@ -24,6 +23,9 @@ import type { LessonId } from './simulator/types'
 import { useSimulatorStore } from './state/useSimulatorStore'
 
 function App() {
+  const DEFAULT_LEFT_PANE_WIDTH = 48
+  const DEFAULT_TOP_PANE_VH = 92
+
   const {
     lessonId,
     code,
@@ -44,6 +46,12 @@ function App() {
   } = useSimulatorStore()
 
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [showClockReadout, setShowClockReadout] = useState(false)
+  const [leftPaneWidth, setLeftPaneWidth] = useState(DEFAULT_LEFT_PANE_WIDTH)
+  const [topPaneHeight, setTopPaneHeight] = useState(DEFAULT_TOP_PANE_VH)
+
+  const focusGridRef = useRef<HTMLElement | null>(null)
+  const appMainRef = useRef<HTMLDivElement | null>(null)
 
   const speedSteps = [500, 1200, 2500, 5000, 10000, 15000, 20000]
 
@@ -77,6 +85,69 @@ function App() {
     return () => window.clearTimeout(timer)
   }, [playbackStatus, currentStep, speedMs, stepForward])
 
+  const startVerticalResize = () => {
+    const host = focusGridRef.current
+    if (!host) {
+      return
+    }
+
+    const rect = host.getBoundingClientRect()
+    const minPercent = 28
+    const maxPercent = 72
+
+    const onMouseMove = (event: MouseEvent) => {
+      const raw = ((event.clientX - rect.left) / rect.width) * 100
+      const clamped = Math.min(maxPercent, Math.max(minPercent, raw))
+      setLeftPaneWidth(clamped)
+    }
+
+    const stop = () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', stop)
+    }
+
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', stop)
+  }
+
+  const startHorizontalResize = () => {
+    const host = appMainRef.current
+    if (!host) {
+      return
+    }
+
+    const rect = host.getBoundingClientRect()
+    const minPercent = 56
+    const maxPercent = 94
+
+    const onMouseMove = (event: MouseEvent) => {
+      const raw = ((event.clientY - rect.top) / window.innerHeight) * 100
+      const clamped = Math.min(maxPercent, Math.max(minPercent, raw))
+      setTopPaneHeight(clamped)
+    }
+
+    const stop = () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', stop)
+    }
+
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', stop)
+  }
+
+  const resetVerticalSplit = () => {
+    setLeftPaneWidth(DEFAULT_LEFT_PANE_WIDTH)
+  }
+
+  const resetHorizontalSplit = () => {
+    setTopPaneHeight(DEFAULT_TOP_PANE_VH)
+  }
+
+  const appMainStyle = {
+    '--top-pane-vh': `${topPaneHeight}vh`,
+    '--left-pane-width': `${leftPaneWidth}%`,
+  } as CSSProperties
+
   return (
     <div className={`layout-shell ${sidebarOpen ? 'sidebar-open' : 'sidebar-closed'}`}>
       <aside className="side-rail">
@@ -91,17 +162,23 @@ function App() {
             <MenuIcon />
           </button>
 
-          <span className="rail-glyph" title="Lesson">
-            <BookIcon />
-          </span>
-          <span className="rail-glyph" title="Flow">
-            <FlowIcon />
-          </span>
-          <span className="rail-glyph" title="Concepts">
-            <LayersIcon />
-          </span>
-
           <span className="rail-divider" />
+
+          <button
+            type="button"
+            className="rail-icon-button"
+            aria-label="Show current timeline time"
+            onClick={() => setShowClockReadout((state) => !state)}
+            title="Show current time"
+          >
+            <ClockIcon />
+          </button>
+
+          {showClockReadout ? (
+            <p className="rail-time-readout" aria-live="polite">
+              {currentSnapshot?.clock ?? 0}ms
+            </p>
+          ) : null}
 
           <button
             type="button"
@@ -221,8 +298,8 @@ function App() {
         </div>
       </aside>
 
-      <div className="app-main">
-        <main className="focus-grid">
+      <div ref={appMainRef} className="app-main" style={appMainStyle}>
+        <main ref={focusGridRef} className="focus-grid">
           <section className="panel panel-editor">
             <header className="playground-header">
               <h2>{activeLesson?.title}</h2>
@@ -236,6 +313,18 @@ function App() {
             />
           </section>
 
+          <div
+            className="splitter splitter-vertical"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize code and visualization panels"
+            onMouseDown={startVerticalResize}
+            onDoubleClick={resetVerticalSplit}
+            title="Drag to resize. Double-click to reset."
+          >
+            <span />
+          </div>
+
           <section className="panel panel-runtime">
             {currentSnapshot ? (
               <RuntimeBoard snapshot={currentSnapshot} transition={activeTransition} />
@@ -244,6 +333,18 @@ function App() {
             )}
           </section>
         </main>
+
+        <div
+          className="splitter splitter-horizontal"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Resize visualization and timeline panels"
+          onMouseDown={startHorizontalResize}
+          onDoubleClick={resetHorizontalSplit}
+          title="Drag to resize. Double-click to reset."
+        >
+          <span />
+        </div>
 
         <section className="panel panel-timeline">
           <TimelinePanel

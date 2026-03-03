@@ -53,7 +53,7 @@ export function CodeEditor({ code, focusLine, onChange }: CodeEditorProps) {
         </div>
 
         <Editor
-          height="clamp(420px, 58vh, 760px)"
+          height="100%"
           defaultLanguage="javascript"
           value={code}
           onChange={(value) => onChange(value ?? '')}

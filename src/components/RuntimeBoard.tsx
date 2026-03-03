@@ -1,354 +1,256 @@
 import { AnimatePresence, motion } from 'framer-motion'
+import { useMemo, useState } from 'react'
+import { FlowIcon, LayersIcon } from './Icons'
 import type { RuntimeSnapshot } from '../simulator/types'
-import type { FlowNodeKey, FlowTransition } from '../simulator/transitions'
-import { FlowPulse } from './FlowPulse'
+import type { FlowTransition } from '../simulator/transitions'
 
 type RuntimeBoardProps = {
   snapshot: RuntimeSnapshot
   transition: FlowTransition | null
 }
 
-type DisplayItem = {
+type RuntimeView = 'flow' | 'state'
+
+type Item = {
   id: string
   label: string
   detail?: string
 }
 
-const FLOW_NODES: Record<FlowNodeKey, { label: string; x: number; y: number }> = {
-  runtime: { label: 'Script', x: 12, y: 20 },
-  webApis: { label: 'Web APIs', x: 28, y: 55 },
-  callbackQueue: { label: 'Callback Queue', x: 48, y: 55 },
-  microtaskQueue: { label: 'Microtasks', x: 48, y: 74 },
-  eventLoop: { label: 'Event Loop', x: 70, y: 57 },
-  callStack: { label: 'Call Stack', x: 88, y: 36 },
-  console: { label: 'Console', x: 88, y: 61 },
-  completed: { label: 'Completed', x: 88, y: 82 },
-}
-
-const BASE_EDGES: Array<[FlowNodeKey, FlowNodeKey]> = [
-  ['runtime', 'callStack'],
-  ['runtime', 'webApis'],
-  ['runtime', 'microtaskQueue'],
-  ['webApis', 'callbackQueue'],
-  ['callbackQueue', 'eventLoop'],
-  ['microtaskQueue', 'eventLoop'],
-  ['eventLoop', 'callStack'],
-  ['callStack', 'console'],
-  ['callStack', 'completed'],
-]
-
-function edgeKey(from: FlowNodeKey, to: FlowNodeKey) {
-  return `${from}-${to}`
-}
-
-function LanePanel({
+function CompactLane({
   title,
-  lane,
   items,
-  transition,
+  tone,
+  active,
 }: {
   title: string
-  lane: FlowNodeKey
-  items: DisplayItem[]
-  transition: FlowTransition | null
+  items: Item[]
+  tone: 'stack' | 'web' | 'micro' | 'callback' | 'console'
+  active: boolean
 }) {
-  const isActive = transition?.from === lane || transition?.to === lane
-  const displayItems = lane === 'callStack' ? [...items].reverse() : items
+  const displayItems = title === 'Call Stack' ? [...items].reverse() : items
 
   return (
     <motion.article
       layout
-      className={`runtime-panel ${isActive ? 'lane-active' : ''}`}
-      transition={{ type: 'spring', stiffness: 340, damping: 30 }}
+      className={`lane-card tone-${tone} ${active ? 'active' : ''}`}
+      transition={{ type: 'spring', stiffness: 320, damping: 28 }}
     >
       <h3>{title}</h3>
       {displayItems.length === 0 ? (
         <p className="empty">Empty</p>
       ) : (
-        <motion.ul layout>
-          <AnimatePresence mode="popLayout">
-            {displayItems.map((item, index) => (
-              <motion.li
-                layout
-                key={item.id}
-                className={lane === 'callStack' && index === 0 ? 'stack-top' : ''}
-                initial={{ opacity: 0, y: 8, scale: 0.98 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: -8, scale: 0.98 }}
-                transition={{ duration: 0.18, ease: 'easeOut' }}
-              >
-                <strong>{item.label}</strong>
-                {item.detail ? <span>{item.detail}</span> : null}
-              </motion.li>
-            ))}
-          </AnimatePresence>
-        </motion.ul>
+        <ul>
+          {displayItems.map((item, index) => (
+            <li key={item.id} className={title === 'Call Stack' && index === 0 ? 'stack-top' : ''}>
+              <strong>{item.label}</strong>
+              {item.detail ? <span>{item.detail}</span> : null}
+            </li>
+          ))}
+        </ul>
       )}
     </motion.article>
   )
 }
 
-function transitionEdges(transition: FlowTransition | null): Set<string> {
-  if (!transition) {
-    return new Set()
-  }
-
-  if (transition.from === 'callbackQueue' && transition.to === 'callStack') {
-    return new Set([
-      edgeKey('callbackQueue', 'eventLoop'),
-      edgeKey('eventLoop', 'callStack'),
-    ])
-  }
-
-  if (transition.from === 'microtaskQueue' && transition.to === 'callStack') {
-    return new Set([
-      edgeKey('microtaskQueue', 'eventLoop'),
-      edgeKey('eventLoop', 'callStack'),
-    ])
-  }
-
-  if (transition.from === 'runtime' && transition.to === 'callbackQueue') {
-    return new Set([
-      edgeKey('runtime', 'webApis'),
-      edgeKey('webApis', 'callbackQueue'),
-    ])
-  }
-
-  return new Set([edgeKey(transition.from, transition.to)])
-}
-
-function tracerPath(
-  transition: FlowTransition | null,
-): { left: string[]; top: string[] } | null {
-  if (!transition) {
-    return null
-  }
-
-  const source = FLOW_NODES[transition.from]
-  const target = FLOW_NODES[transition.to]
-  if (!source || !target) {
-    return null
-  }
-
-  if (transition.from === 'callbackQueue' && transition.to === 'callStack') {
-    const loop = FLOW_NODES.eventLoop
-    return {
-      left: [`${source.x}%`, `${loop.x}%`, `${target.x}%`],
-      top: [`${source.y}%`, `${loop.y}%`, `${target.y}%`],
-    }
-  }
-
-  if (transition.from === 'microtaskQueue' && transition.to === 'callStack') {
-    const loop = FLOW_NODES.eventLoop
-    return {
-      left: [`${source.x}%`, `${loop.x}%`, `${target.x}%`],
-      top: [`${source.y}%`, `${loop.y}%`, `${target.y}%`],
-    }
-  }
-
-  if (transition.from === 'runtime' && transition.to === 'callbackQueue') {
-    const webApis = FLOW_NODES.webApis
-    return {
-      left: [`${source.x}%`, `${webApis.x}%`, `${target.x}%`],
-      top: [`${source.y}%`, `${webApis.y}%`, `${target.y}%`],
-    }
-  }
-
-  return {
-    left: [`${source.x}%`, `${target.x}%`],
-    top: [`${source.y}%`, `${target.y}%`],
-  }
+function StateCard({ title, lines }: { title: string; lines: Array<{ key: string; value: string }> }) {
+  return (
+    <article className="state-card">
+      <h3>{title}</h3>
+      {lines.length === 0 ? (
+        <p className="empty">No data</p>
+      ) : (
+        <ul>
+          {lines.map((line) => (
+            <li key={line.key}>
+              <strong>{line.key}</strong>
+              <span>{line.value}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </article>
+  )
 }
 
 export function RuntimeBoard({ snapshot, transition }: RuntimeBoardProps) {
-  const movementKey = transition
-    ? `${transition.itemId}-${transition.from}-${transition.to}-${snapshot.id}`
-    : `no-move-${snapshot.id}`
+  const [view, setView] = useState<RuntimeView>('flow')
 
-  const activeEdges = transitionEdges(transition)
-  const isEventLoopActive =
-    transition?.from === 'callbackQueue' ||
-    transition?.from === 'microtaskQueue' ||
-    transition?.to === 'eventLoop'
+  const movementText = transition
+    ? `${transition.from} -> ${transition.to} (${transition.label})`
+    : 'No lane transfer in this frame'
 
-  const activeConsoleLane = transition?.from === 'console' || transition?.to === 'console'
-  const path = tracerPath(transition)
+  const eventLoopActive =
+    transition?.from === 'callbackQueue' || transition?.from === 'microtaskQueue'
+
+  const memoryLines = useMemo(
+    () =>
+      snapshot.memory.map((card) => ({
+        key: card.title,
+        value: card.fields.map((field) => `${field.key}: ${field.value}`).join(' | '),
+      })),
+    [snapshot.memory],
+  )
+
+  const lexicalLines = useMemo(
+    () =>
+      snapshot.lexicalScopes.map((scope) => ({
+        key: scope.title,
+        value: scope.fields.map((field) => `${field.key}: ${field.value}`).join(' | '),
+      })),
+    [snapshot.lexicalScopes],
+  )
+
+  const consoleLines = useMemo(
+    () =>
+      snapshot.consoleLines.map((line, index) => ({
+        key: `${index + 1}`,
+        value: line,
+      })),
+    [snapshot.consoleLines],
+  )
 
   return (
     <div className="runtime-board">
-      <section className="flow-map-wrapper">
-        <svg className="flow-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-          {BASE_EDGES.map(([from, to]) => (
-            <line
-              key={edgeKey(from, to)}
-              x1={FLOW_NODES[from].x}
-              y1={FLOW_NODES[from].y}
-              x2={FLOW_NODES[to].x}
-              y2={FLOW_NODES[to].y}
-              className={activeEdges.has(edgeKey(from, to)) ? 'flow-edge active' : 'flow-edge'}
-            />
-          ))}
-        </svg>
-
-        {Object.entries(FLOW_NODES).map(([nodeKey, node]) => {
-          const isActive =
-            transition?.from === nodeKey ||
-            transition?.to === nodeKey ||
-            (nodeKey === 'eventLoop' && isEventLoopActive)
-
-          return (
-            <motion.div
-              key={nodeKey}
-              className={`flow-node-badge ${isActive ? 'active' : ''}`}
-              style={{ left: `${node.x}%`, top: `${node.y}%` }}
-              animate={isActive ? { scale: 1.08 } : { scale: 1 }}
-              transition={{ duration: 0.2, ease: 'easeOut' }}
-            >
-              <span>{node.label}</span>
-            </motion.div>
-          )
-        })}
-
-        {path ? (
-          <motion.div
-            key={`${movementKey}-token`}
-            className="flow-tracer"
-            initial={{ left: path.left[0], top: path.top[0], opacity: 0.35, scale: 0.8 }}
-            animate={{ left: path.left, top: path.top, opacity: 1, scale: 1 }}
-            transition={{ duration: 0.62, ease: 'easeInOut' }}
-          />
-        ) : null}
-      </section>
-      {/**/}
-      {/* <p className="flow-map-caption"> */}
-      {/*   {transition */}
-      {/*     ? `Current movement: ${transition.label} (${FLOW_NODES[transition.from].label} -> ${FLOW_NODES[transition.to].label})` */}
-      {/*     : 'Current movement: no lane transfer in this frame'} */}
-      {/* </p> */}
-      {/**/}
-      {/* <p className="eventloop-note"> */}
-      {/*   Event loop concept: when the call stack is empty, microtasks run first, then callback queue tasks. */}
-      {/* </p> */}
-      {/**/}
-      {/* <FlowPulse stepId={snapshot.id} transition={transition} /> */}
-      {/**/}
-      {/* <motion.p */}
-      {/*   key={`explanation-${snapshot.id}`} */}
-      {/*   className="runtime-explainer" */}
-      {/*   initial={{ opacity: 0, x: 8 }} */}
-      {/*   animate={{ opacity: 1, x: 0 }} */}
-      {/*   transition={{ duration: 0.18, ease: 'easeOut' }} */}
-      {/* > */}
-      {/*   {snapshot.explanation} */}
-      {/* </motion.p> */}
-      {/**/}
-      <div className="runtime-grid">
-        <LanePanel
-          title="Call Stack"
-          lane="callStack"
-          items={snapshot.callStack}
-          transition={transition}
-        />
-        <LanePanel
-          title="Web APIs"
-          lane="webApis"
-          items={snapshot.webApis}
-          transition={transition}
-        />
-        <LanePanel
-          title="Microtask Queue"
-          lane="microtaskQueue"
-          items={snapshot.microtaskQueue}
-          transition={transition}
-        />
-        <LanePanel
-          title="Callback Queue"
-          lane="callbackQueue"
-          items={snapshot.callbackQueue}
-          transition={transition}
-        />
-
-        <motion.article layout className="runtime-panel">
-          <h3>Memory</h3>
-          {snapshot.memory.length === 0 ? (
-            <p className="empty">No objects tracked</p>
-          ) : (
-            <motion.ul layout>
-              <AnimatePresence mode="popLayout">
-                {snapshot.memory.map((card) => (
-                  <motion.li
-                    layout
-                    key={card.id}
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -8 }}
-                    transition={{ duration: 0.18, ease: 'easeOut' }}
-                  >
-                    <strong>{card.title}</strong>
-                    <span>
-                      {card.fields.map((field) => `${field.key}: ${field.value}`).join(' | ')}
-                    </span>
-                  </motion.li>
-                ))}
-              </AnimatePresence>
-            </motion.ul>
-          )}
-        </motion.article>
-
-        <motion.article layout className="runtime-panel">
-          <h3>Lexical Scopes</h3>
-          {snapshot.lexicalScopes.length === 0 ? (
-            <p className="empty">No lexical scopes active</p>
-          ) : (
-            <motion.ul layout>
-              <AnimatePresence mode="popLayout">
-                {snapshot.lexicalScopes.map((scope) => (
-                  <motion.li
-                    layout
-                    key={scope.id}
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -8 }}
-                    transition={{ duration: 0.18, ease: 'easeOut' }}
-                  >
-                    <strong>{scope.title}</strong>
-                    <span>
-                      {scope.fields.map((field) => `${field.key}: ${field.value}`).join(' | ')}
-                    </span>
-                  </motion.li>
-                ))}
-              </AnimatePresence>
-            </motion.ul>
-          )}
-        </motion.article>
-
-        <motion.article
-          layout
-          className={`runtime-panel console-panel ${activeConsoleLane ? 'lane-active' : ''}`}
+      <div className="runtime-view-switch" role="tablist" aria-label="Runtime panel view">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={view === 'flow'}
+          className={view === 'flow' ? 'active' : ''}
+          onClick={() => setView('flow')}
         >
-          <h3>Console Output</h3>
-          {snapshot.consoleLines.length === 0 ? (
-            <p className="empty">No logs yet</p>
-          ) : (
-            <motion.ol layout>
-              <AnimatePresence>
-                {snapshot.consoleLines.map((line, index) => (
-                  <motion.li
-                    layout
-                    key={`${line}-${index}`}
-                    initial={{ opacity: 0, x: -8 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: 8 }}
-                    transition={{ duration: 0.15, ease: 'easeOut' }}
-                  >
-                    {line}
-                  </motion.li>
-                ))}
-              </AnimatePresence>
-            </motion.ol>
-          )}
-        </motion.article>
+          <FlowIcon />
+          <span>Flow Lanes</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={view === 'state'}
+          className={view === 'state' ? 'active' : ''}
+          onClick={() => setView('state')}
+        >
+          <LayersIcon />
+          <span>State Details</span>
+        </button>
       </div>
+
+      <AnimatePresence mode="wait">
+        {view === 'flow' ? (
+          <motion.section
+            key="flow-view"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.22, ease: 'easeOut' }}
+            className="flow-view"
+          >
+            <div className="flow-top-grid">
+              <CompactLane
+                title="Call Stack"
+                items={snapshot.callStack}
+                tone="stack"
+                active={transition?.from === 'callStack' || transition?.to === 'callStack'}
+              />
+
+              <CompactLane
+                title="Web APIs"
+                items={snapshot.webApis}
+                tone="web"
+                active={transition?.from === 'webApis' || transition?.to === 'webApis'}
+              />
+            </div>
+
+            <div className={`event-loop-row ${eventLoopActive ? 'active' : ''}`}>
+              <motion.div
+                className="event-loop-spinner"
+                animate={{ rotate: 360 }}
+                transition={{ duration: 2.6, ease: 'linear', repeat: Number.POSITIVE_INFINITY }}
+              >
+                ↻
+              </motion.div>
+              <div>
+                <p>Event Loop</p>
+                <small>When stack is empty: microtasks first, then callback queue.</small>
+              </div>
+            </div>
+
+            <article
+              className={`lane-card queue-combo ${
+                transition?.from === 'callbackQueue' ||
+                transition?.to === 'callbackQueue' ||
+                transition?.from === 'microtaskQueue' ||
+                transition?.to === 'microtaskQueue'
+                  ? 'active'
+                  : ''
+              }`}
+            >
+              <div className="queue-combo-grid">
+                <section className="queue-segment tone-micro">
+                  <h3>Microtask Queue</h3>
+                  {snapshot.microtaskQueue.length === 0 ? (
+                    <p className="empty">Empty</p>
+                  ) : (
+                    <ul>
+                      {snapshot.microtaskQueue.map((item) => (
+                        <li key={item.id}>
+                          <strong>{item.label}</strong>
+                          {item.detail ? <span>{item.detail}</span> : null}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+
+                <section className="queue-segment tone-callback">
+                  <h3>Callback Queue</h3>
+                  {snapshot.callbackQueue.length === 0 ? (
+                    <p className="empty">Empty</p>
+                  ) : (
+                    <ul>
+                      {snapshot.callbackQueue.map((item) => (
+                        <li key={item.id}>
+                          <strong>{item.label}</strong>
+                          {item.detail ? <span>{item.detail}</span> : null}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              </div>
+            </article>
+
+            <CompactLane
+              title="Console Output"
+              items={snapshot.consoleLines.map((line, index) => ({
+                id: `console-${index}-${line}`,
+                label: line,
+              }))}
+              tone="console"
+              active={transition?.from === 'console' || transition?.to === 'console'}
+            />
+
+            <p className="runtime-explainer">{snapshot.explanation}</p>
+            <p className="flow-map-caption">Current movement: {movementText}</p>
+          </motion.section>
+        ) : (
+          <motion.section
+            key="state-view"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.22, ease: 'easeOut' }}
+            className="state-view"
+          >
+            <div className="state-grid">
+              <StateCard title="Memory" lines={memoryLines} />
+              <StateCard title="Lexical Scopes" lines={lexicalLines} />
+              <StateCard title="Console Output" lines={consoleLines} />
+            </div>
+            <p className="runtime-explainer">{snapshot.explanation}</p>
+          </motion.section>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
